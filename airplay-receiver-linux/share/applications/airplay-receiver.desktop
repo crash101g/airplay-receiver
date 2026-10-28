@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Apple AirPlay Receiver
+Comment=Mirror your iPhone, iPad or Mac to this computer
+Exec=airplay-receiver-gui
+Icon=airplay-receiver
+Terminal=false
+Categories=AudioVideo;Player;Network;
+Keywords=airplay;mirror;cast;screen;iphone;ipad;mac;uxplay;
+StartupNotify=true

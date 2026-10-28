@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""
+airplay-receiver-gui — a small GTK4/libadwaita front-end for UxPlay.
+
+Designed for Pop!_OS COSMIC (also works on GNOME). It launches uxplay as a
+child process, streams its log into a scrolling view, and surfaces the
+pairing PIN prominently when one is requested. No root needed.
+
+Dependencies on the target machine (all in Pop!_OS repos):
+    sudo apt install uxplay python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+"""
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, GLib, Gio, Pango
+
+import os
+import re
+import shlex
+import signal
+import socket
+
+APP_ID = "org.popos.AirPlayReceiver"
+APP_NAME = "Apple AirPlay Receiver"
+APP_VERSION = "1.7.0"   # keep in sync with bin/airplay-receiver and install.sh
+
+# Preset name -> (label, subtitle, extra uxplay args)
+PRESETS = {
+    "open":   ("Open — no password", "Anyone on your network can cast — fine for home Wi-Fi", []),
+    "locked": ("Password required", "Devices must enter the password you set below", []),
+    "audio":  ("Audio only", "Play your device's audio through this PC's speakers — no video window", []),
+}
+
+# Video output (GStreamer sink). On Pop!_OS COSMIC the Wayland sink opens an
+# undecorated window you can't move or resize, and its fullscreen call crashes;
+# the X11 sink (via XWayland) gives a normal movable/resizable window, so it's
+# the default here. Maximize that window (double-click its title bar) to fill
+# the TV — that's the reliable "fullscreen" on COSMIC.
+SINKS = {
+    "x11":     ("Resizable window (recommended)", ["-vs", "xvimagesink"]),
+    "wayland": ("COSMIC native (Wayland)",        ["-vs", "waylandsink"]),
+    "auto":    ("Automatic",                      []),
+}
+
+PIN_RE = re.compile(r'ENTER PIN\s*=\s*"?(\d{3,6})"?')
+
+
+class ReceiverWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title=APP_NAME)
+        # Tall enough to show every row plus the buttons without resizing.
+        self.set_default_size(600, 960)
+        self.set_size_request(420, 720)
+        self.proc = None          # Gio.Subprocess
+        self.cancellable = None
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_title_widget(
+            Adw.WindowTitle(title=APP_NAME, subtitle=f"v{APP_VERSION}"))
+        toolbar.add_top_bar(header)
+        self.set_content(toolbar)
+
+        page = Adw.PreferencesPage()
+        toolbar.set_content(page)
+
+        # ---- Settings group ------------------------------------------------
+        grp = Adw.PreferencesGroup(title="Receiver settings")
+        page.add(grp)
+
+        self.name_row = Adw.EntryRow(title="Display name (shown on your devices)")
+        # Default to a neutral name, NOT the computer's hostname.
+        self.name_row.set_text("AirPlay")
+        grp.add(self.name_row)
+
+        self.mode_row = Adw.ComboRow(title="Mode")
+        model = Gtk.StringList()
+        self._mode_keys = list(PRESETS.keys())
+        for key in self._mode_keys:
+            model.append(PRESETS[key][0])
+        self.mode_row.set_model(model)
+        self.mode_row.set_selected(0)  # open — simplest for a home TV
+        self.mode_row.connect("notify::selected", self._on_mode_changed)
+        grp.add(self.mode_row)
+
+        self.mode_hint = Adw.ActionRow()
+        self.mode_hint.add_css_class("dim-label")
+        grp.add(self.mode_hint)
+
+        # A fixed password. Required in "Password required" mode; in any other
+        # mode, setting one here also makes devices enter it. Blank = no password.
+        self.pw_row = Adw.PasswordEntryRow(
+            title="Password (devices must enter this)")
+        grp.add(self.pw_row)
+
+        self.sink_row = Adw.ComboRow(title="Video output")
+        sink_model = Gtk.StringList()
+        self._sink_keys = list(SINKS.keys())
+        for key in self._sink_keys:
+            sink_model.append(SINKS[key][0])
+        self.sink_row.set_model(sink_model)
+        self.sink_row.set_selected(0)  # x11 — movable/resizable on COSMIC
+        self.sink_row.set_subtitle("Resizable window; press F11 in it for fullscreen")
+        grp.add(self.sink_row)
+
+        # UxPlay has native fullscreen on its X11 video window (the default
+        # "Resizable window" output): press F11 or left-Alt+Enter in the window.
+        # This is far more reliable than driving the compositor ourselves.
+        keys_row = Adw.ActionRow(
+            title="TV / fullscreen",
+            subtitle="In the video window:  double-click,  or press  F11  /  left-Alt + Enter",
+        )
+        keys_row.add_css_class("dim-label")
+        grp.add(keys_row)
+
+        # ---- Start / stop --------------------------------------------------
+        btn_grp = Adw.PreferencesGroup()
+        page.add(btn_grp)
+        box = Gtk.Box(spacing=12, halign=Gtk.Align.CENTER, margin_top=6, margin_bottom=6)
+        self.start_btn = Gtk.Button(label="Start receiver")
+        self.start_btn.add_css_class("suggested-action")
+        self.start_btn.add_css_class("pill")
+        self.start_btn.connect("clicked", self._on_start)
+        self.stop_btn = Gtk.Button(label="Stop")
+        self.stop_btn.add_css_class("destructive-action")
+        self.stop_btn.add_css_class("pill")
+        self.stop_btn.set_sensitive(False)
+        self.stop_btn.connect("clicked", self._on_stop)
+        box.append(self.start_btn)
+        box.append(self.stop_btn)
+        btn_grp.add(box)
+
+        # ---- PIN banner ----------------------------------------------------
+        self.pin_banner = Adw.Banner(title="")
+        self.pin_banner.set_revealed(False)
+        toolbar.add_top_bar(self.pin_banner)
+
+        # ---- Log view ------------------------------------------------------
+        log_grp = Adw.PreferencesGroup(title="Activity")
+        page.add(log_grp)
+        self.log = Gtk.TextView(editable=False, cursor_visible=False, monospace=True)
+        self.log.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        scroller = Gtk.ScrolledWindow(min_content_height=150, vexpand=True)
+        scroller.set_child(self.log)
+        scroller.add_css_class("card")
+        log_grp.add(scroller)
+
+        self._on_mode_changed(self.mode_row, None)
+        self._append(f"{APP_NAME} v{APP_VERSION}\n")
+        self.connect("close-request", self._on_close)
+
+    # ---- helpers -----------------------------------------------------------
+    def _on_mode_changed(self, row, _):
+        key = self._mode_keys[row.get_selected()]
+        self.mode_hint.set_title(PRESETS[key][1])
+
+    def _append(self, text):
+        buf = self.log.get_buffer()
+        buf.insert(buf.get_end_iter(), text)
+        mark = buf.create_mark(None, buf.get_end_iter(), False)
+        self.log.scroll_mark_onscreen(mark)
+        m = PIN_RE.search(text)
+        if m:
+            self._show_pin(m.group(1))
+
+    def _show_pin(self, pin):
+        self.pin_banner.set_title(f"Enter this PIN on your device:  {pin}")
+        self.pin_banner.set_revealed(True)
+
+    def _build_argv(self):
+        key = self._mode_keys[self.mode_row.get_selected()]
+        # -nh stops uxplay appending "@hostname" to the name on your devices.
+        argv = ["uxplay", "-n", self.name_row.get_text().strip() or "AirPlay", "-nh"]
+        if key == "audio":
+            # -vs 0 = audio only, no video display window (true audio-only mode).
+            argv += ["-vs", "0"]
+        else:
+            argv += SINKS[self._sink_keys[self.sink_row.get_selected()]][1]
+        preset_args = list(PRESETS[key][2])
+        # Access control is password-based (-pw = digest auth, enforced on every
+        # new device). We do NOT use uxplay's -pin: that is "pair once, then the
+        # device is remembered" and does not re-prompt, so it isn't real access
+        # control. A password is required in "locked" mode and optional elsewhere.
+        password = self.pw_row.get_text().strip()
+        if key == "locked" or password:
+            if password:
+                preset_args += ["-pw", password]
+        argv += preset_args
+        return argv
+
+    def _needs_password(self):
+        """True if the chosen mode requires a password that isn't set yet."""
+        key = self._mode_keys[self.mode_row.get_selected()]
+        return key == "locked" and not self.pw_row.get_text().strip()
+
+    # ---- process control ---------------------------------------------------
+    def _on_start(self, _btn):
+        if self.proc is not None:
+            return
+        if self._needs_password():
+            self.pin_banner.set_title('Enter a password above first, or switch to "Open".')
+            self.pin_banner.set_revealed(True)
+            self.pw_row.grab_focus()
+            return
+        argv = self._build_argv()
+        argv[0] = self.get_application().uxplay_path
+        # UxPlay only makes stdout unbuffered on Windows, so when we capture it
+        # through a pipe on Linux glibc block-buffers it and the pairing PIN
+        # never reaches us live. Force line-buffering with stdbuf if present.
+        stdbuf = GLib.find_program_in_path("stdbuf")
+        if stdbuf:
+            argv = [stdbuf, "-oL", "-eL"] + argv
+        self._append("$ " + " ".join(shlex.quote(a) for a in argv) + "\n")
+        try:
+            launcher = Gio.SubprocessLauncher(
+                flags=Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE
+            )
+            self.proc = launcher.spawnv(argv)
+        except GLib.Error as e:
+            self._append(f"failed to start uxplay: {e.message}\n")
+            self.proc = None
+            return
+        self.pin_banner.set_revealed(False)
+        self.start_btn.set_sensitive(False)
+        self.stop_btn.set_sensitive(True)
+        self._append("Tip: in the video window, double-click (or press F11 / "
+                     "left-Alt+Enter) for fullscreen.\n")
+        self.cancellable = Gio.Cancellable()
+        stream = Gio.DataInputStream.new(self.proc.get_stdout_pipe())
+        self._read_line(stream)
+        self.proc.wait_async(None, self._on_proc_exit)
+
+    def _read_line(self, stream):
+        stream.read_line_async(GLib.PRIORITY_DEFAULT, self.cancellable, self._on_line, stream)
+
+    def _on_line(self, stream, result, _data):
+        try:
+            line, _ = stream.read_line_finish_utf8(result)
+        except GLib.Error:
+            return
+        if line is None:
+            return
+        self._append(line + "\n")
+        self._read_line(stream)
+
+    def _on_proc_exit(self, proc, _result):
+        self._append("— receiver stopped —\n")
+        self.proc = None
+        self.start_btn.set_sensitive(True)
+        self.stop_btn.set_sensitive(False)
+        self.pin_banner.set_revealed(False)
+
+    def _on_stop(self, _btn=None):
+        if self.proc is not None:
+            self.proc.send_signal(signal.SIGTERM)
+
+    def _on_close(self, *_):
+        self._on_stop()
+        return False
+
+
+class ReceiverApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.uxplay_path = GLib.find_program_in_path("uxplay") or "uxplay"
+
+    def do_activate(self):
+        win = self.props.active_window
+        if not win:
+            win = ReceiverWindow(self)
+        win.present()
+
+
+def main():
+    app = ReceiverApp()
+    return app.run(None)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
