@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# airplay-receiver — a friendly front-end for UxPlay on Pop!_OS / COSMIC
+#
+# Wraps uxplay with easy, named presets and safe defaults so you don't
+# have to remember UxPlay's flag soup. Everything here just builds a
+# uxplay command line and runs it — no elevated privileges needed.
+#
+# Usage:
+#   airplay-receiver                 # open mode (no password) — the default
+#   airplay-receiver open            # no password — convenient on a trusted home LAN
+#   airplay-receiver locked PASS     # fixed password PASS required to connect
+#   airplay-receiver tv              # reminds you to press F11 for fullscreen
+#   airplay-receiver audio           # audio-only: device sound to this PC, no window
+#   airplay-receiver status          # is a receiver already running?
+#   airplay-receiver stop            # stop a running receiver
+#
+# Fullscreen: once the mirror window is open, DOUBLE-CLICK it, or press
+#   F11  or  left-Alt+Enter  to toggle borderless fullscreen. Needs the X11
+#   video output (the default) and a UxPlay built by airplay-build-uxplay.
+#
+# Extra options after the preset are passed straight to uxplay, e.g.:
+#   airplay-receiver tv -n "Living Room"
+#
+set -euo pipefail
+
+VERSION="1.7.0"   # keep in sync with airplay-receiver-gui and install.sh
+
+# ---- defaults you can override with environment variables -----------------
+: "${AIRPLAY_NAME:=AirPlay}"       # name shown on iPhone/Mac (not the hostname)
+: "${AIRPLAY_SINK:=xvimagesink}"   # video output; xvimagesink = movable/resizable on COSMIC
+UXPLAY_BIN="${UXPLAY_BIN:-uxplay}"
+
+die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+info() { printf '\033[36m•\033[0m %s\n' "$*" >&2; }
+
+# Build the base argument list every preset shares.
+# -nh stops uxplay appending "@hostname" to the name shown on your devices.
+args=( -n "$AIRPLAY_NAME" -nh )
+
+# Video output (GStreamer sink) is added after the preset is known, because the
+# audio-only preset needs "-vs 0" (no video) instead. On Pop!_OS COSMIC the
+# Wayland sink opens an undecorated window you can't move/resize; xvimagesink
+# (via XWayland) gives a normal movable/resizable window, so it's the default.
+# Override with AIRPLAY_SINK=waylandsink, AIRPLAY_SINK=glimagesink, etc.
+: "${AIRPLAY_SINK:=xvimagesink}"
+want_video=1
+
+preset="${1:-open}"; shift || true
+
+case "$preset" in
+  status)
+    if pgrep -x uxplay >/dev/null; then
+      info "A receiver is running:"; pgrep -ax uxplay; exit 0
+    else
+      info "No receiver running."; exit 1
+    fi ;;
+  stop)
+    if pkill -x uxplay; then info "Stopped."; else info "Nothing to stop."; fi; exit 0 ;;
+  open)
+    info "OPEN mode: anyone on this network can cast. Use only on a LAN you trust." ;;
+  locked)
+    [ $# -ge 1 ] || die "usage: airplay-receiver locked <password>"
+    args+=( -pw "$1" ); shift
+    info "LOCKED mode: a fixed password is required to connect." ;;
+  audio)
+    # -vs 0 = audio only: play the device's audio through this PC, no video window.
+    want_video=0
+    info "AUDIO-ONLY mode: device audio plays here, no mirror window." ;;
+  tv)
+    # Native fullscreen on the X11 window: double-click, or F11 / left-Alt+Enter.
+    info "TV mode: once the window opens, double-click it (or press F11) for fullscreen." ;;
+  -V|--version|version)
+    echo "airplay-receiver $VERSION"; exit 0 ;;
+  -h|--help|help)
+    echo "airplay-receiver $VERSION"
+    sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  *)
+    die "unknown preset '$preset'. Run 'airplay-receiver help'." ;;
+esac
+
+# Choose the video output now that the preset is known.
+if [ "$want_video" = "1" ]; then
+    [ -n "$AIRPLAY_SINK" ] && args+=( -vs "$AIRPLAY_SINK" )
+else
+    args+=( -vs 0 )   # audio-only: no video display window
+fi
+
+# Anything left on the command line is forwarded verbatim to uxplay.
+args+=( "$@" )
+
+command -v "$UXPLAY_BIN" >/dev/null 2>&1 || die "uxplay not found on PATH. Install it first (run ./install.sh or 'sudo apt install uxplay')."
+
+info "airplay-receiver $VERSION — launching: $UXPLAY_BIN ${args[*]}"
+info "Fullscreen: double-click the video window, or press F11 / left-Alt+Enter."
+exec "$UXPLAY_BIN" "${args[@]}"
