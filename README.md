@@ -13,6 +13,8 @@ A clean GTK4 app **and** a friendly command line, powered by a patched, up-to-da
 
 </div>
 
+![AirPlay Receiver for Linux: a phone mirrored to a TV, next to the app window](docs/images/hero.png)
+
 ---
 
 ## ✨ What it does
@@ -40,7 +42,17 @@ A native **GTK4 / libadwaita** app that fits right into Pop!_OS COSMIC and GNOME
 - **Video output** — a resizable window (recommended) or the Wayland-native sink
 - **Start / Stop**, with a live activity log and the fullscreen shortcut right there
 
+![The app running beside the airplay-receiver command line](docs/images/gui-and-cli.png)
+
 Prefer the terminal? `airplay-receiver open` and you're live.
+
+![The Open, Password required and Audio only modes](docs/images/modes.png)
+
+It follows your desktop's light or dark style:
+
+![The app in dark and light styles](docs/images/themes.png)
+
+<sub>App windows and terminal output are real captures, using sample names and a masked MAC address. The phone and TV pictures are illustrations.</sub>
 
 ---
 
@@ -98,6 +110,8 @@ Or build the engine yourself at any time:
 ---
 
 ## 🎮 Using it
+
+![Start the receiver, choose it on your device, watch it on the big screen](docs/images/how-it-works.png)
 
 1. Launch **AirPlay Receiver** (app grid) or run `airplay-receiver-gui`.
 2. Pick a **Mode** (Open is fine on a home network) and press **Start**.
