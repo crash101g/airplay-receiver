@@ -91,7 +91,7 @@ Depends: python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1,
  libgstreamer-plugins-base1.0-dev
 Section: video
 Priority: optional
-Homepage: https://github.com/OWNER/airplay-receiver-linux
+Homepage: https://github.com/crash101g/airplay-receiver
 Description: AirPlay receiver for Linux (GUI + CLI over UxPlay)
  Mirror an iPhone, iPad or Mac to this computer over AirPlay. Provides a
  GTK4/libadwaita app and a friendly command-line wrapper, and builds and

@@ -52,7 +52,7 @@ It follows your desktop's light or dark style:
 
 ![The app in dark and light styles](docs/images/themes.png)
 
-<sub>App windows and terminal output are real captures, using sample names and a masked MAC address. The phone and TV pictures are illustrations.</sub>
+<sub>App windows and terminal output are real captures, using sample names and a masked MAC address. The startup log in the app window is a replay of real `uxplay` output. The phone and TV pictures are illustrations.</sub>
 
 ---
 
@@ -90,8 +90,8 @@ That's it. `apt` pulls the dependencies, and the package **compiles and installs
 ### Any Linux — from source
 
 ```bash
-git clone https://github.com/OWNER/airplay-receiver-linux.git
-cd airplay-receiver-linux
+git clone https://github.com/crash101g/airplay-receiver.git
+cd airplay-receiver
 ./scripts/install.sh      # installs the app to ~/.local and offers to build the engine
 ```
 
