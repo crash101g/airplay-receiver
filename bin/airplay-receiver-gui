@@ -119,6 +119,15 @@ class ReceiverWindow(Adw.ApplicationWindow):
         self.fps_row.set_subtitle("Maximum; your device sends fewer frames when the screen is still")
         grp.add(self.fps_row)
 
+        # uxplay -vsync no: show each mirrored frame as soon as it is decoded
+        # instead of holding it until its timestamp (audio/video sync). On Wi-Fi
+        # that timestamp wait adds lag and makes late frames stutter or drop.
+        self.lowlat_row = Adw.SwitchRow(
+            title="Low-latency mirroring",
+            subtitle="Faster, smoother screen mirroring; lip sync may be slightly looser")
+        self.lowlat_row.set_active(True)
+        grp.add(self.lowlat_row)
+
         # UxPlay has native fullscreen on its X11 video window (the default
         # "Resizable window" output): press F11 or left-Alt+Enter in the window.
         # This is far more reliable than driving the compositor ourselves.
@@ -171,6 +180,8 @@ class ReceiverWindow(Adw.ApplicationWindow):
         self.mode_hint.set_title(PRESETS[key][1])
         if hasattr(self, "fps_row"):
             self.fps_row.set_sensitive(key != "audio")
+        if hasattr(self, "lowlat_row"):
+            self.lowlat_row.set_sensitive(key != "audio")
 
     def _append(self, text):
         buf = self.log.get_buffer()
@@ -195,6 +206,8 @@ class ReceiverWindow(Adw.ApplicationWindow):
         else:
             argv += SINKS[self._sink_keys[self.sink_row.get_selected()]][1]
             argv += FPS[self._fps_keys[self.fps_row.get_selected()]][1]
+            if self.lowlat_row.get_active():
+                argv += ["-vsync", "no"]
         preset_args = list(PRESETS[key][2])
         # Access control is password-based (-pw = digest auth, enforced on every
         # new device). We do NOT use uxplay's -pin: that is "pair once, then the
