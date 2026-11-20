@@ -9,7 +9,7 @@ set -euo pipefail
 info() { printf '\033[36m•\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m!\033[0m %s\n' "$*"; }
 
-VERSION="1.7.0"   # keep in sync with bin/airplay-receiver and airplay-receiver-gui
+VERSION="1.8.0"   # keep in sync with bin/airplay-receiver and airplay-receiver-gui
 PREFIX="${PREFIX:-$HOME/.local}"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 

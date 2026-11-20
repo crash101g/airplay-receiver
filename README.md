@@ -6,7 +6,7 @@
 
 A clean GTK4 app **and** a friendly command line, powered by a patched, up-to-date [UxPlay](https://github.com/FDH2/UxPlay) engine. One-command install. No cloud, no account, no dongle.
 
-![version](https://img.shields.io/badge/version-1.7.0-blue)
+![version](https://img.shields.io/badge/version-1.8.0-blue)
 ![license](https://img.shields.io/badge/license-GPLv3-green)
 ![platform](https://img.shields.io/badge/platform-Linux-informational)
 ![desktop](https://img.shields.io/badge/Pop!__OS%20COSMIC-tested-success)
@@ -80,7 +80,7 @@ Works on both **Wayland** (including COSMIC) and **X11** sessions. Fullscreen-by
 Download the latest `airplay-receiver_*.deb` from the [Releases](../../releases) page, then:
 
 ```bash
-sudo apt install ./airplay-receiver_1.7.0_all.deb
+sudo apt install ./airplay-receiver_1.8.0_all.deb
 ```
 
 That's it. `apt` pulls the dependencies, and the package **compiles and installs the bundled UxPlay engine on first install** (a one-time ~1–2 minute build — that's why the build toolchain is listed as a dependency). When it finishes, look for **AirPlay Receiver** in your app launcher.

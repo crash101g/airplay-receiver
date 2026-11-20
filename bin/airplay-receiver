@@ -30,7 +30,7 @@
 #
 set -euo pipefail
 
-VERSION="1.7.0"   # keep in sync with airplay-receiver-gui and install.sh
+VERSION="1.8.0"   # keep in sync with airplay-receiver-gui and install.sh
 
 # ---- defaults you can override with environment variables -----------------
 : "${AIRPLAY_NAME:=AirPlay}"       # name shown on iPhone/Mac (not the hostname)

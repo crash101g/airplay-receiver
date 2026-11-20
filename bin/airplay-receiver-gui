@@ -24,7 +24,7 @@ import sys
 
 APP_ID = "org.popos.AirPlayReceiver"
 APP_NAME = "Apple AirPlay Receiver"
-APP_VERSION = "1.7.0"   # keep in sync with bin/airplay-receiver and install.sh
+APP_VERSION = "1.8.0"   # keep in sync with bin/airplay-receiver and install.sh
 
 # Preset name -> (label, subtitle, extra uxplay args)
 PRESETS = {
