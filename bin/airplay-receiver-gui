@@ -42,6 +42,12 @@ SINKS = {
     "auto":    ("Automatic",                      []),
 }
 
+# Max mirroring frame rate (uxplay -fps). uxplay's own default is 30.
+FPS = {
+    "60": ("60 fps — smooth (recommended)", ["-fps", "60"]),
+    "30": ("30 fps — lighter on CPU and Wi-Fi", ["-fps", "30"]),
+}
+
 PIN_RE = re.compile(r'ENTER PIN\s*=\s*"?(\d{3,6})"?')
 
 
@@ -103,6 +109,16 @@ class ReceiverWindow(Adw.ApplicationWindow):
         self.sink_row.set_subtitle("Resizable window; press F11 in it for fullscreen")
         grp.add(self.sink_row)
 
+        self.fps_row = Adw.ComboRow(title="Frame rate")
+        fps_model = Gtk.StringList()
+        self._fps_keys = list(FPS.keys())
+        for key in self._fps_keys:
+            fps_model.append(FPS[key][0])
+        self.fps_row.set_model(fps_model)
+        self.fps_row.set_selected(0)  # 60 fps
+        self.fps_row.set_subtitle("Maximum; your device sends fewer frames when the screen is still")
+        grp.add(self.fps_row)
+
         # UxPlay has native fullscreen on its X11 video window (the default
         # "Resizable window" output): press F11 or left-Alt+Enter in the window.
         # This is far more reliable than driving the compositor ourselves.
@@ -153,6 +169,8 @@ class ReceiverWindow(Adw.ApplicationWindow):
     def _on_mode_changed(self, row, _):
         key = self._mode_keys[row.get_selected()]
         self.mode_hint.set_title(PRESETS[key][1])
+        if hasattr(self, "fps_row"):
+            self.fps_row.set_sensitive(key != "audio")
 
     def _append(self, text):
         buf = self.log.get_buffer()
@@ -176,6 +194,7 @@ class ReceiverWindow(Adw.ApplicationWindow):
             argv += ["-vs", "0"]
         else:
             argv += SINKS[self._sink_keys[self.sink_row.get_selected()]][1]
+            argv += FPS[self._fps_keys[self.fps_row.get_selected()]][1]
         preset_args = list(PRESETS[key][2])
         # Access control is password-based (-pw = digest auth, enforced on every
         # new device). We do NOT use uxplay's -pin: that is "pair once, then the
