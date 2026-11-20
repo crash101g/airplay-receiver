@@ -14,11 +14,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib, Gio, Pango
 
+import json
 import os
 import re
 import shlex
 import signal
 import socket
+import sys
 
 APP_ID = "org.popos.AirPlayReceiver"
 APP_NAME = "Apple AirPlay Receiver"
@@ -47,6 +49,50 @@ FPS = {
     "60": ("60 fps — smooth (recommended)", ["-fps", "60"]),
     "30": ("30 fps — lighter on CPU and Wi-Fi", ["-fps", "30"]),
 }
+
+# ---- Saved settings ----------------------------------------------------------
+# Stored per user in the OS's standard config folder. The password is NOT
+# saved, so it never sits on disk in plain text.
+CONFIG_DIRNAME = "airplay-receiver"
+
+
+def config_dir():
+    """Per-user settings folder, following each OS's convention."""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+    elif sys.platform == "darwin":
+        base = os.path.join(home, "Library", "Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    return os.path.join(base, CONFIG_DIRNAME)
+
+
+def settings_path():
+    return os.path.join(config_dir(), "settings.json")
+
+
+def load_settings():
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}   # missing or corrupt file -> defaults
+
+
+def save_settings(data):
+    """Write atomically so a crash mid-save can't leave a half-written file."""
+    path = settings_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except OSError as e:
+        print(f"could not save settings to {path}: {e}", file=sys.stderr)
+
 
 PIN_RE = re.compile(r'ENTER PIN\s*=\s*"?(\d{3,6})"?')
 
@@ -170,9 +216,40 @@ class ReceiverWindow(Adw.ApplicationWindow):
         scroller.add_css_class("card")
         log_grp.add(scroller)
 
+        self._apply_settings(load_settings())
         self._on_mode_changed(self.mode_row, None)
         self._append(f"{APP_NAME} v{APP_VERSION}\n")
         self.connect("close-request", self._on_close)
+
+    # ---- settings ----------------------------------------------------------
+    # Choices are saved by key (e.g. "x11"), not list position, so reordering
+    # or adding options later doesn't scramble anyone's saved settings.
+    @staticmethod
+    def _select_key(row, keys, key):
+        if key in keys:
+            row.set_selected(keys.index(key))
+
+    def _apply_settings(self, s):
+        name = s.get("name")
+        if isinstance(name, str) and name.strip():
+            self.name_row.set_text(name.strip())
+        self._select_key(self.mode_row, self._mode_keys, s.get("mode"))
+        self._select_key(self.sink_row, self._sink_keys, s.get("sink"))
+        self._select_key(self.fps_row, self._fps_keys, s.get("fps"))
+        if isinstance(s.get("low_latency"), bool):
+            self.lowlat_row.set_active(s["low_latency"])
+
+    def _current_settings(self):
+        return {
+            "name": self.name_row.get_text().strip() or "AirPlay",
+            "mode": self._mode_keys[self.mode_row.get_selected()],
+            "sink": self._sink_keys[self.sink_row.get_selected()],
+            "fps": self._fps_keys[self.fps_row.get_selected()],
+            "low_latency": self.lowlat_row.get_active(),
+        }
+
+    def _save(self):
+        save_settings(self._current_settings())
 
     # ---- helpers -----------------------------------------------------------
     def _on_mode_changed(self, row, _):
@@ -234,6 +311,7 @@ class ReceiverWindow(Adw.ApplicationWindow):
             self.pin_banner.set_revealed(True)
             self.pw_row.grab_focus()
             return
+        self._save()
         argv = self._build_argv()
         argv[0] = self.get_application().uxplay_path
         # UxPlay only makes stdout unbuffered on Windows, so when we capture it
@@ -287,6 +365,7 @@ class ReceiverWindow(Adw.ApplicationWindow):
             self.proc.send_signal(signal.SIGTERM)
 
     def _on_close(self, *_):
+        self._save()
         self._on_stop()
         return False
 
